@@ -1,5 +1,7 @@
 from typing import Any
 
+from .reasoner import _has_approved_waiver
+
 
 class InvestigationPlanner:
     """
@@ -82,10 +84,6 @@ class InvestigationPlanner:
         plan: dict[str, Any],
         investigation: dict[str, Any],
     ) -> dict[str, Any]:
-        """
-        Mark investigation questions as answered or unresolved
-        using the evidence collected.
-        """
 
         findings = investigation["findings"]
         evidence = investigation["evidence"]
@@ -107,6 +105,9 @@ class InvestigationPlanner:
         statuses["Q4"] = self._grade_status(
             findings,
             evidence,
+            investigation["requirement"][
+                "required_composition_grade"
+            ],
         )
 
         statuses["Q5"] = self._quantity_status(
@@ -121,7 +122,6 @@ class InvestigationPlanner:
         updated_questions = []
 
         for question in plan["questions"]:
-
             status = statuses[question["id"]]
 
             updated_questions.append(
@@ -136,6 +136,7 @@ class InvestigationPlanner:
             question
             for question in updated_questions
             if question["status"] != "ANSWERED"
+            and question["status"] != "NOT_APPLICABLE"
         ]
 
         return {
@@ -230,7 +231,17 @@ class InvestigationPlanner:
     def _grade_status(
         findings: list[dict[str, Any]],
         evidence: list[dict[str, Any]],
+        required_grade: str | None,
     ) -> dict[str, str]:
+
+        if not required_grade:
+            return {
+                "status": "NOT_APPLICABLE",
+                "reason": (
+                    "This loading operation does not specify a "
+                    "required composition grade."
+                ),
+            }
 
         mismatches = [
             finding
@@ -246,20 +257,13 @@ class InvestigationPlanner:
                 ),
             }
 
-        has_approved_substitution = any(
-            item["type"] == "OPERATIONAL_EVENT"
-            and "approved substitute"
-            in item.get("description", "").lower()
-            for item in evidence
-        )
-
-        if has_approved_substitution:
+        if _has_approved_waiver(evidence):
             return {
                 "status": "ANSWERED",
                 "reason": (
                     "A composition-grade mismatch was identified, "
-                    "but an explicit approved substitution explains "
-                    "the exception."
+                    "but an explicit approved substitution or "
+                    "waiver explains the exception."
                 ),
             }
 
@@ -309,6 +313,20 @@ class InvestigationPlanner:
             for finding in findings
         )
 
+        has_open_issue = any(
+            finding["type"] == "OPEN_OPERATIONAL_ISSUE"
+            for finding in findings
+        )
+
+        if has_open_issue:
+            return {
+                "status": "UNRESOLVED",
+                "reason": (
+                    "An open operational event remains unresolved "
+                    "for this loading investigation."
+                ),
+            }
+
         if not has_mismatch:
             return {
                 "status": "ANSWERED",
@@ -318,19 +336,12 @@ class InvestigationPlanner:
                 ),
             }
 
-        has_waiver = any(
-            item["type"] == "OPERATIONAL_EVENT"
-            and "approved substitute"
-            in item.get("description", "").lower()
-            for item in evidence
-        )
-
-        if has_waiver:
+        if _has_approved_waiver(evidence):
             return {
                 "status": "ANSWERED",
                 "reason": (
-                    "An explicit approved substitution was found "
-                    "in the operational evidence."
+                    "An explicit approved substitution or waiver "
+                    "was found in the operational evidence."
                 ),
             }
 
